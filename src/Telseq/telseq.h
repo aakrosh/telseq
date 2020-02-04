@@ -111,7 +111,7 @@ struct Headers{
 		headers.push_back(ScanParameters::LABEL_DUP);
 		headers.push_back(ScanParameters::LABEL_LEN);
 
-		for(int i=0;i < ScanParameters::TEL_MOTIF_N;i++){
+		for(unsigned int i=0;i < ScanParameters::TEL_MOTIF_N;i++){
 			std::string h = ScanParameters::LABEL_TEL + NumberToString(i);
 			headers.push_back(h);
 		}
