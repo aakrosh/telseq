@@ -41,7 +41,7 @@ AC_MSG_NOTICE(["CPPFLAGS is $CPPFLAGS"])
 AC_MSG_NOTICE(["LDFLAGS is $LDFLAGS"])
 
 # We always need to specify to link in seqlib
-AC_SUBST(LIBS, "$LIBS -lseqlib.a -lz")
+AC_SUBST(LIBS, "$LIBS $withval/lib/libhts.a $withval/lib/libbwa.a $withval/lib/libfml.a $withval/lib/libseqlib.a -lz -lbz2 -llzma")
 
 #AC_MSG_NOTICE(["LIBS is $LIBS"])
 
