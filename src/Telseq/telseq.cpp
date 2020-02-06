@@ -37,13 +37,13 @@ static const char *TELSEQ_USAGE_MESSAGE =
 "Program: " PACKAGE_NAME "\n"
 "Version: " PACKAGE_VERSION "\n"
 "Contact: " AUTHOR " [" PACKAGE_BUGREPORT "]\n\n"
-"Usage: " PROGRAM_BIN " [OPTION] <in.1.bam> <in.2.bam> <...> \n"
-"Scan BAM and estimate telomere length. \n"
-"   <in.bam>                 one or more BAM files to be analysed. File names can also be passed from a pipe, \n "
-"                            with each row containing one BAM path.\n"
-"   -f, --bamlist=STR        a file that contains a list of file paths of BAMs. It should has only one column, \n"
-"                            with each row a BAM file path. -f has higher priority than <in.bam>. When specified, \n"
-"                            <in.bam> are ignored.\n"
+"Usage: " PROGRAM_BIN " [OPTION] <in.1.bam>|<in.1.cram> <in.2.bam>|<in.2.cram> <...> \n"
+"Scan BAM/CRAM and estimate telomere length. \n"
+"   <in.bam>|<in.cram>       one or more BAM/CRAM files to be analysed. File names can also be passed from a pipe, \n "
+"                            with each row containing one BAM/CRAM path.\n"
+"   -f, --bamlist=STR        a file that contains a list of file paths of BAMs/CRAMs. It should has only one column, \n"
+"                            with each row a BAM/CRAM file path. -f has higher priority than <in.bam>|<in.cram>. When specified, \n"
+"                            <in.bam>|<in.cram> are ignored.\n"
 "   -o, --output_dir=STR     output file for results. Ignored when input is from stdin, in which case output will be stdout. \n"
 "   -H                       remove header line, which is printed by default.\n"
 "   -h                       print the header line only. The text can be used to attach to result files, useful\n"
@@ -52,6 +52,7 @@ static const char *TELSEQ_USAGE_MESSAGE =
 "                            the total number of reads in read group. Default is to output each readgroup separately.\n"
 "   -u                       ignore read groups. Treat all reads in BAM as if they were from a same read group.\n"
 "   -k                       threshold of the amount of TTAGGG/CCCTAA repeats in read for a read to be considered telomeric. default = 7.\n"
+"   -T                       reference sequence FASTA file for CRAM input. If not specified, then the file specified in the CRAM file is used\n"    
 "\nTesting functions\n------------\n"
 "   -r                       read length. default = 100\n"
 "   -z                       use user specified pattern for searching [ATGC]*.\n"
@@ -76,10 +77,10 @@ namespace opt
     static std::string unknown = "UNKNOWN";
     static std::string PATTERN;
     static std::string PATTERN_REV;
-
+    static std::string referencefile = "";
 }
 
-static const char* shortopts = "f:o:k:z:e:r:p:Hhvmuw";
+static const char* shortopts = "f:o:k:z:e:r:p:T:Hhvmuw";
 
 enum { OPT_HELP = 1, OPT_VERSION };
 
@@ -87,6 +88,7 @@ static const struct option longopts[] = {
     { "bamlist",		optional_argument, NULL, 'f' },
     { "output-dir",		optional_argument, NULL, 'o' },
     { "exomebed",		optional_argument, NULL, 'e' },
+    { "reference",		optional_argument, NULL, 'T' },
     { "help",               no_argument,       NULL, OPT_HELP },
     { "version",            no_argument,       NULL, OPT_VERSION },
     { NULL, 0, NULL, 0 }
@@ -109,6 +111,15 @@ void add_results(ScanResults& x, ScanResults& y){
         x.gccounts[k] += y.gccounts[k];
     }
 
+}
+
+bool endsWith(const std::string &mainStr, const std::string &toMatch)
+{
+    if(mainStr.size() >= toMatch.size() &&
+       mainStr.compare(mainStr.size() - toMatch.size(), toMatch.size(), toMatch) == 0) {
+        return true;
+    }
+    return false;
 }
 
 // merge results in result list into one
@@ -160,6 +171,10 @@ int scanBam()
         // Open the bam files for reading/writing
         SeqLib::BamReader* pBamReader = new SeqLib::BamReader;
 
+        if (!opt::referencefile.empty() && endsWith(opt::bamlist[i], ".cram")) {
+            pBamReader->SetCramReference(opt::referencefile);
+            std::cerr << "Setting reference to " << opt::referencefile << "\n";
+        }
         pBamReader->Open(opt::bamlist[i]);
 
         // get bam headers
@@ -593,6 +608,8 @@ void parseScanOptions(int argc, char** argv)
             	arg >> bamlistfile; break;
             case 'o':
             	arg >> opt::outputfile; break;
+            case 'T':
+                arg >> opt::referencefile; break;
             case 'H':
             	opt::writerheader=false; break;
             case 'm':
