@@ -48,7 +48,7 @@ AC_SUBST(LIBS, "$LIBS $withval/lib/libhts.a $withval/lib/libbwa.a $withval/lib/l
 # Make sure the seqlib headers can be found
 AC_CHECK_HEADER([SeqLib/BamReader.h],,[AC_MSG_ERROR(
 [The SeqLib library must be installed. \
-You can specify its path with the --with-seqlib=PATH option])])
+You can specify its path with the --with-seqlib=PATH option])],-)
 
 AC_CONFIG_FILES([Makefile
 		Util/Makefile
