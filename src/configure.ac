@@ -19,7 +19,7 @@ AC_ARG_WITH(seqlib,
         AS_HELP_STRING([--with-seqlib=DIR], [specify directory containing the seqlib library]),
         [ if test -d "$withval" ; then
             bamtools_ldflags="-L$withval/lib"
-    		bamtools_include="-I$withval -I$withval/fermi-lite -I$withval/htslib -I$withval/bwa -I$withval/SeqLib"
+    		bamtools_include="-I$withval -I$withval/htslib "
 		else
           	AC_MSG_ERROR([Cannot stat directory $withval])
       	fi ]
@@ -41,7 +41,7 @@ AC_MSG_NOTICE(["CPPFLAGS is $CPPFLAGS"])
 AC_MSG_NOTICE(["LDFLAGS is $LDFLAGS"])
 
 # We always need to specify to link in seqlib
-AC_SUBST(LIBS, "$LIBS $withval/lib/libhts.a $withval/lib/libbwa.a $withval/lib/libfml.a $withval/lib/libseqlib.a -lz -lbz2 -llzma")
+AC_SUBST(LIBS, "$LIBS $withval/lib/libseqlib.a $withval/lib/libbwa.a $withval/lib/libfml.a $withval/lib/libhts.a -lz -lbz2 -llzma -lpthread")
 
 #AC_MSG_NOTICE(["LIBS is $LIBS"])
 

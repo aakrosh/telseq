@@ -2,7 +2,7 @@
 
 set -ex
 aclocal
-autoconf
+autoconf -Wall
 autoheader
 automake -a
 
