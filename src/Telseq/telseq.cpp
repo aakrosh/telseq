@@ -11,13 +11,15 @@
 #include <map>
 #include <unistd.h>
 
+
 #include "telseq.h"
 #include "Timer.h"
 #include "math.h"
-#include "api/BamReader.h"
-#include "api/BamWriter.h"
 #include "Util.h"
 #include "prettyprint.h"
+
+#include "SeqLib/BamReader.h"
+#include "SeqLib/BamWriter.h"
 
 //
 // Getopt
@@ -70,7 +72,7 @@ namespace opt
     static bool mergerg = false;
     static bool ignorerg = false;
     static bool onebam = false; // whether to consider all bams as one bam
-    static int tel_k= ScanParameters::TEL_MOTIF_CUTOFF;
+    static unsigned long long int tel_k= ScanParameters::TEL_MOTIF_CUTOFF;
     static std::string unknown = "UNKNOWN";
     static std::string PATTERN;
     static std::string PATTERN_REV;
@@ -82,7 +84,7 @@ static const char* shortopts = "f:o:k:z:e:r:p:Hhvmuw";
 enum { OPT_HELP = 1, OPT_VERSION };
 
 static const struct option longopts[] = {
-	{ "bamlist",		optional_argument, NULL, 'f' },
+    { "bamlist",		optional_argument, NULL, 'f' },
     { "output-dir",		optional_argument, NULL, 'o' },
     { "exomebed",		optional_argument, NULL, 'e' },
     { "help",               no_argument,       NULL, OPT_HELP },
@@ -136,196 +138,228 @@ void merge_results_by_readgroup(
 
 }
 
-
 int scanBam()
 {
 
-  std::vector< std::map<std::string, ScanResults> > resultlist;
-  bool isExome = opt::exomebedfile.size()==0? false: true;
+    std::vector< std::map<std::string, ScanResults> > resultlist;
+    bool isExome = opt::exomebedfile.size()==0? false: true;
 
-  std::cout << opt::bamlist << "\n";
-  std::cout << opt::bamlist.size() << " BAMs" <<  std::endl;
+    std::cout << opt::bamlist << "\n";
+    std::cout << opt::bamlist.size() << " BAMs" <<  std::endl;
 
-  for(std::size_t i=0; i<opt::bamlist.size(); i++) {
+    for(std::size_t i=0; i<opt::bamlist.size(); i++) {
+        // storing results for each read group (RG tag). use
+        // read group ID as key.
+        std::map<std::string, ScanResults> resultmap;
+        // store where the overlap was last found in the case of exome seq
+        std::map<std::string, std::vector<range>::iterator> lastfound;
+        std::vector<range>::iterator searchhint;
 
-  // storing results for each read group (RG tag). use
-  // read group ID as key.
-      std::map<std::string, ScanResults> resultmap;
-      // store where the overlap was last found in the case of exome seq
-      std::map<std::string, std::vector<range>::iterator> lastfound;
-      std::vector<range>::iterator searchhint;
+        std::cerr << "Start analysing BAM " << opt::bamlist[i] << "\n";
 
-      std::cerr << "Start analysing BAM " << opt::bamlist[i] << "\n";
+        // Open the bam files for reading/writing
+        SeqLib::BamReader* pBamReader = new SeqLib::BamReader;
 
-      // Open the bam files for reading/writing
-      BamTools::BamReader* pBamReader = new BamTools::BamReader;
+        pBamReader->Open(opt::bamlist[i]);
 
-      pBamReader->Open(opt::bamlist[i]);
+        // get bam headers
+        const SeqLib::BamHeader header = pBamReader ->Header();
+        bool rggroups=false;
 
-      // get bam headers
-      const BamTools::SamHeader header = pBamReader ->GetHeader();
-      bool rggroups=false;
+        if(opt::ignorerg){ // ignore read groups
+	        std::cerr << "Treat all reads in BAM as if they were from a same sample" << std::endl;
+	        ScanResults results;
+	        results.sample = opt::unknown;
+	        resultmap[opt::unknown]=results;
+        }else{
+	        std::map <std::string, std::string> readgroups;
+	        std::map <std::string, std::string> readlibs;
 
-      if(opt::ignorerg){ // ignore read groups
-	      std::cerr << "Treat all reads in BAM as if they were from a same sample" << std::endl;
-	      ScanResults results;
-	      results.sample = opt::unknown;
-	      resultmap[opt::unknown]=results;
-      }else{
-	std::map <std::string, std::string> readgroups;
-	std::map <std::string, std::string> readlibs;
+	        // rggroups = header.HasReadGroups();
+            int numgroups = 0;
+            std::string line;
+            std::stringstream ss(header.AsString());
+            while (std::getline(ss, line, '\n')) {
+                if (line.rfind("@RG", 0) == 0) {
+                    numgroups += 1;
+                }
+            }
+            if (numgroups > 0) rggroups = true;
 
-	rggroups = header.HasReadGroups();
+	        if(rggroups){
+	            // for(BamTools::SamReadGroupConstIterator it = header.ReadGroups.Begin(); it != header.ReadGroups.End();++it){
+	            //   readgroups[it->ID]= it->Sample;
+	            //   if(it->HasLibrary()){
+	            //     readlibs[it->ID] = it -> Library;
+	            //   }else{
+	            //     readlibs[it->ID] = opt::unknown;
+	            //   }
+	            // }
+    
+                std::stringstream ss(header.AsString());
+                while (std::getline(ss, line, '\n')) {
+                    if (line.rfind("@RG", 0) == 0) {
+                        // std::cout << line << "\n";
+                        std::stringstream tt(line);
+                        std::string t;
+                        std::string id;
+                        while (getline(tt, t, '\t')) {
+                            if (t.rfind("ID:", 0) == 0) {
+                                id = t.substr(3);          
+                                readlibs[id] = opt::unknown;        
+                            } else if (t.rfind("SM:", 0) == 0) {
+                                readgroups[id] = t.substr(3);
+                            } else if (t.rfind("LB:", 0) == 0) {
+                                readlibs[id] = t.substr(3);
+                            }
+                        }
+                        // std::cout << readlibs[id] << "\n";
+                        // std::cout << readgroups[id] << "\n";
+                    }
+                }
+	            std::cerr<<"Specified BAM has "<< readgroups.size()<< " read groups" << std::endl;
 
-	if(rggroups){
-	  for(BamTools::SamReadGroupConstIterator it = header.ReadGroups.Begin(); it != header.ReadGroups.End();++it){
-	    readgroups[it->ID]= it->Sample;
-	    if(it->HasLibrary()){
-	      readlibs[it->ID] = it -> Library;
-	    }else{
-	      readlibs[it->ID] = opt::unknown;
-	    }
-	  }
-	  std::cerr<<"Specified BAM has "<< readgroups.size()<< " read groups" << std::endl;
+	            for(std::map<std::string, std::string>::iterator it = readgroups.begin(); it != readgroups.end(); ++it){
+		            ScanResults results;
+		            std::string rgid = it -> first;
+		            results.sample = it -> second;
+		            results.lib = readlibs[rgid];
+		            resultmap[rgid]=results; //results are identified by RG tag.
+	            }
+	        }else{
+	            std::cerr << "Warning: can't find RG tag in the BAM header" << std::endl;
+	            std::cerr << "Warning: treat all reads in BAM as if they were from a same sample" << std::endl;
+	            ScanResults results;
+	            results.sample = opt::unknown;
+	            results.lib = opt::unknown;
+	            resultmap[opt::unknown]=results;
+	        }
+        }
 
-	  for(std::map<std::string, std::string>::iterator it = readgroups.begin(); it != readgroups.end(); ++it){
-		  ScanResults results;
-		  std::string rgid = it -> first;
-		  results.sample = it -> second;
-		  results.lib = readlibs[rgid];
-		  resultmap[rgid]=results; //results are identified by RG tag.
-	  }
+        SeqLib::BamRecord record1;
+        bool done = false;
 
-	}else{
-	  std::cerr << "Warning: can't find RG tag in the BAM header" << std::endl;
-	  std::cerr << "Warning: treat all reads in BAM as if they were from a same sample" << std::endl;
-	  ScanResults results;
-	  results.sample = opt::unknown;
-	  results.lib = opt::unknown;
-	  resultmap[opt::unknown]=results;
-	}
-      }
+        int nprocessed=0; // number of reads analyzed
+        int ntotal=0; // number of reads scanned in bam (we skip some reads, see below)
+        while(!done) {
+	        ntotal ++;
+	        done = !pBamReader -> GetNextRecord(record1);
+	        std::string tag = opt::unknown;
+	        if(rggroups){
+	            // skip reads that do not have read group tag
+	            // if(record1.HasTag("RG")){
+	            //   record1.GetTag("RG", tag);
+	            // }else{
+	            //   std::cerr << "can't find RG tag for read at position {" << record1.RefID << ":" << record1.Position << "}" << std::endl;
+	            //   std::cerr << "skip this read" << std::endl;
+	            //   continue;
+	            // }
+                tag = record1.ParseReadGroup();
+                if (tag.empty()) {
+                    std::cerr << "can't find RG tag for read at position {" << record1.ChrID() << ":" << record1.Position() << "}" << std::endl;
+                    std::cerr << "skip this read" << std::endl;
+                    continue;
+                }
+	        }
 
-      BamTools::BamAlignment record1;
-      bool done = false;
+	        // skip reads with readgroup not defined in BAM header
+	        if(resultmap.find(tag) == resultmap.end()){
+	            std::cerr << "RG tag {" << tag << "} for read at position ";
+	            std::cerr << "{" << record1.ChrID() << ":" << record1.Position() << "} doesn't exist in BAM header.";
+	            continue;
+	        }
 
-      int nprocessed=0; // number of reads analyzed
-      int ntotal=0; // number of reads scanned in bam (we skip some reads, see below)
-      while(!done) {
-	ntotal ++;
-	done = !pBamReader -> GetNextAlignment(record1);
-	std::string tag = opt::unknown;
-	if(rggroups){
-	  // skip reads that do not have read group tag
-	  if(record1.HasTag("RG")){
-	    record1.GetTag("RG", tag);
-	  }else{
-	    std::cerr << "can't find RG tag for read at position {" << record1.RefID << ":" << record1.Position << "}" << std::endl;
-	    std::cerr << "skip this read" << std::endl;
-	    continue;
-	  }
-	}
+	        // for exome, exclude reads mapped to the exome regions.
+	        if(isExome){
+	            range rg;
+	            rg.first = record1.Position();
+	            rg.second = record1.Position() + record1.Length();
+	            std::string chrm =  refID2Name(record1.ChrID());
 
-	// skip reads with readgroup not defined in BAM header
-	if(resultmap.find(tag) == resultmap.end()){
-	  std::cerr << "RG tag {" << tag << "} for read at position ";
-	  std::cerr << "{" << record1.RefID << ":" << record1.Position << "} doesn't exist in BAM header.";
-	  continue;
-	}
+	            if(chrm != "-1"){ // check if overlap exome when the read is mapped to chr1-22, X, Y
+	                std::map<std::string, std::vector<range> >::iterator chrmit = opt::exomebed.find(chrm);
+	                if(chrmit == opt::exomebed.end()) {
+	        	        // unmapped reads can have chr names as a star (*). We also don't consider MT reads.
+	        	        resultmap[tag].n_exreadsChrUnmatched +=1;
+	                } else {
+	                    std::vector<range>::iterator itend = opt::exomebed[chrm].end();
+	                    std::map<std::string, std::vector<range>::iterator>::iterator lastfoundchrmit = lastfound.find(chrm);
+	                    if(lastfoundchrmit == lastfound.end()){ // first entry to this chrm
+	        	            lastfound[chrm] = chrmit->second.begin();// start from begining
+	                    }
+	                    // set the hint to where the previous found is
+	                    searchhint = lastfound[chrm];
+	                    std::vector<range>::iterator itsearch = searchRange(searchhint, itend, rg);
+	                    // if found
+	                    if(itsearch != itend){// if found
+	        	            searchhint = itsearch;
+	        	            resultmap[tag].n_exreadsExcluded +=1;
+	        	            lastfound[chrm] = searchhint; // update search hint
+	        	            continue;
+	                    }
+	                }
+	            }
+	        }
 
-	// for exome, exclude reads mapped to the exome regions.
-	if(isExome){
-	  range rg;
-	  rg.first = record1.Position;
-	  rg.second = record1.Position + record1.Length;
-	  std::string chrm =  refID2Name(record1.RefID);
+	        resultmap[tag].numTotal +=1;
 
-	  if(chrm != "-1"){ // check if overlap exome when the read is mapped to chr1-22, X, Y
-	    std::map<std::string, std::vector<range> >::iterator chrmit = opt::exomebed.find(chrm);
-	    if(chrmit == opt::exomebed.end()) {
-		// unmapped reads can have chr names as a star (*). We also don't consider MT reads.
-		resultmap[tag].n_exreadsChrUnmatched +=1;
-	    } else {
-	      std::vector<range>::iterator itend = opt::exomebed[chrm].end();
-	      std::map<std::string, std::vector<range>::iterator>::iterator lastfoundchrmit = lastfound.find(chrm);
-	      if(lastfoundchrmit == lastfound.end()){ // first entry to this chrm
-		      lastfound[chrm] = chrmit->second.begin();// start from begining
-	      }
-	      // set the hint to where the previous found is
-	      searchhint = lastfound[chrm];
-	      std::vector<range>::iterator itsearch = searchRange(searchhint, itend, rg);
-	      // if found
-	      if(itsearch != itend){// if found
-		searchhint = itsearch;
-		resultmap[tag].n_exreadsExcluded +=1;
-		lastfound[chrm] = searchhint; // update search hint
-		continue;
-	      }
-	    }
+	        if(record1.MappedFlag()) {
+	            resultmap[tag].numMapped += 1;
+	        }
 
-	  }
-	}
+	        if(record1.DuplicateFlag()) {
+	            resultmap[tag].numDuplicates +=1;
+	        }
 
-	resultmap[tag].numTotal +=1;
+            std::string sequence = record1.Sequence();
+	        double gc = calcGC(sequence);
+	        unsigned long long int ptn_count = countMotif(sequence, opt::PATTERN, opt::PATTERN_REV);
+	        // when the read length exceeds 100bp, number of patterns might exceed the boundary
+	        if (ptn_count > ScanParameters::TEL_MOTIF_N-1){
+	            continue;
+	        }
+	        resultmap[tag].telcounts[ptn_count]+=1;
 
-	if(record1.IsMapped()) {
-	    resultmap[tag].numMapped += 1;
-	}
+	        if(gc >= ScanParameters::GC_LOWERBOUND && gc <= ScanParameters::GC_UPPERBOUND){
+	            // get index for GC bin.
+	            int idx = floor((gc-ScanParameters::GC_LOWERBOUND)/ScanParameters::GC_BINSIZE);
+	            assert(idx >=0 && idx <= ScanParameters::GC_BIN_N-1);
+	            if(idx > ScanParameters::GC_BIN_N-1){
+	                std::cerr << nprocessed << " GC:{"<< gc << "} telcounts:{"<< ptn_count <<"} GC bin index out of bound:" << idx << "\n";
+	                exit(EXIT_FAILURE);
+	            }
+	            resultmap[tag].gccounts[idx]+=1;
+	        }
 
-	if(record1.IsDuplicate()) {
-	    resultmap[tag].numDuplicates +=1;
-	}
+	        nprocessed++;
 
-	double gc = calcGC(record1.QueryBases);
-	int ptn_count = countMotif(record1.QueryBases, opt::PATTERN, opt::PATTERN_REV);
-	// when the read length exceeds 100bp, number of patterns might exceed the boundary
-	if (ptn_count > ScanParameters::TEL_MOTIF_N-1){
-	    continue;
-	}
-	resultmap[tag].telcounts[ptn_count]+=1;
+	        if( nprocessed%10000000 == 0){
+	            std::cerr << "[scan] processed " << nprocessed << " reads \n" ;
+	        }
+        }
 
+        pBamReader->Close();
+        delete pBamReader;
 
-	if(gc >= ScanParameters::GC_LOWERBOUND && gc <= ScanParameters::GC_UPPERBOUND){
-	  // get index for GC bin.
-	  int idx = floor((gc-ScanParameters::GC_LOWERBOUND)/ScanParameters::GC_BINSIZE);
-	  assert(idx >=0 && idx <= ScanParameters::GC_BIN_N-1);
-	  if(idx > ScanParameters::GC_BIN_N-1){
-	    std::cerr << nprocessed << " GC:{"<< gc << "} telcounts:{"<< ptn_count <<"} GC bin index out of bound:" << idx << "\n";
-	    exit(EXIT_FAILURE);
-	  }
-	  resultmap[tag].gccounts[idx]+=1;
-	}
+        // consider each BAM separately
+        resultlist.push_back(resultmap);
 
-	nprocessed++;
+        std::cerr << "[scan] total reads in BAM scanned " << ntotal << std::endl;
+        std::cerr << "Completed scanning BAM\n";
+    }
 
-	if( nprocessed%10000000 == 0){
-	  std::cerr << "[scan] processed " << nprocessed << " reads \n" ;
-	}
-      }
+    if(opt::onebam){
+        merge_results_by_readgroup(resultlist);
+    }
 
-      pBamReader->Close();
-      delete pBamReader;
+    outputresults(resultlist);
 
-      // consider each BAM separately
-      resultlist.push_back(resultmap);
+    if(isExome){
+        printlog(resultlist);
+    }
 
-      std::cerr << "[scan] total reads in BAM scanned " << ntotal << std::endl;
-      std::cerr << "Completed scanning BAM\n";
-  }
-
-  if(opt::onebam){
-    merge_results_by_readgroup(resultlist);
-  }
-
-  outputresults(resultlist);
-
-  if(isExome){
-    printlog(resultlist);
-  }
-
-  std::cerr << "Completed writing results\n";
-
-  return 0;
+    std::cerr << "Completed writing results\n";
+    return 0;
 }
 
 void printlog(std::vector< std::map<std::string, ScanResults> > resultlist){
@@ -487,7 +521,6 @@ double calcTelLength(ScanResults results){
 
 	return (acc/gc_tel)*float(ScanParameters::GENOME_LENGTH_AT_TEL_GC)/ScanParameters::LENGTH_UNIT/ScanParameters::TELOMERE_ENDS;
 }
-
 
 
 int countMotif(std::string &read, std::string pattern, std::string pattern_revcomp){
